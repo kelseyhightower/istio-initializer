@@ -16,8 +16,11 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/istio/pilot/tools/version"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,6 +34,18 @@ import (
 
 const initializerName = "initializer.istio.io"
 
+type config struct {
+	enableCoreDump  bool
+	hub             string
+	includeIPRanges string
+	istioSystem     string
+	meshConfig      string
+	sidecarProxyUID int64
+	tag             string
+	verbosity       int
+	version         string
+}
+
 func main() {
 	var kubeconfig *string
 	kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
@@ -39,12 +54,22 @@ func main() {
 	log.Println("Starting the istio initializer...")
 	log.Printf("Initializer name set to: %s", initializerName)
 
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	kconfig, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(kconfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cm, err := clientset.CoreV1().ConfigMaps("default").Get("istio-initializer", metav1.GetOptions{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	c, err := configmapToConfig(cm)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -67,7 +92,7 @@ func main() {
 	_, controller := cache.NewInformer(includeUninitializedWatchlist, &corev1.Pod{}, resyncPeriod,
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				err := initializePod(obj.(*corev1.Pod), clientset)
+				err := initializePod(obj.(*corev1.Pod), c, clientset)
 				if err != nil {
 					log.Println(err)
 				}
@@ -85,7 +110,7 @@ func main() {
 	close(stop)
 }
 
-func initializePod(pod *corev1.Pod, clientset *kubernetes.Clientset) error {
+func initializePod(pod *corev1.Pod, c *config, clientset *kubernetes.Clientset) error {
 	if pod.ObjectMeta.GetInitializers() != nil {
 		pendingInitializers := pod.ObjectMeta.GetInitializers().Pending
 
@@ -108,4 +133,60 @@ func initializePod(pod *corev1.Pod, clientset *kubernetes.Clientset) error {
 	}
 
 	return nil
+}
+
+func configmapToConfig(c *corev1.ConfigMap) (*config, error) {
+	var enableCoreDump bool
+	var err error
+
+	enableCoreDump, err = strconv.ParseBool(c.Data["enableCoreDump"])
+	if err != nil {
+		enableCoreDump = false
+	}
+
+	var sidecarProxyUID int64
+	sidecarProxyUID, err = strconv.ParseInt(c.Data["sidecarProxyUID"], 10, 64)
+	if err != nil {
+		sidecarProxyUID = int64(1337)
+	}
+
+	var verbosity int
+	verbosity, err = strconv.Atoi(c.Data["verbosity"])
+	if err != nil {
+		verbosity = 2
+	}
+
+	cfg := &config{
+		enableCoreDump:  enableCoreDump,
+		hub:             c.Data["hub"],
+		includeIPRanges: c.Data["includeIPRanges"],
+		istioSystem:     c.Data["istioSystem"],
+		meshConfig:      c.Data["meshConfig"],
+		sidecarProxyUID: sidecarProxyUID,
+		tag:             c.Data["tag"],
+		verbosity:       verbosity,
+		version:         c.Data["version"],
+	}
+
+	if cfg.hub == "" {
+		cfg.hub = "docker.io/istio"
+	}
+
+	if cfg.istioSystem == "" {
+		cfg.istioSystem = "default"
+	}
+
+	if cfg.meshConfig == "" {
+		cfg.meshConfig = "istio"
+	}
+
+	if cfg.tag == "" {
+		cfg.tag = "0.1"
+	}
+
+	if cfg.version == "" {
+		cfg.version = version.Line()
+	}
+
+	return cfg, nil
 }

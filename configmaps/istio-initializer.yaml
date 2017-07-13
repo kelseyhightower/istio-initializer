@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-initializer
+data:
+  enableCoreDump: "true"
+  hub: "docker.io/istio"
+  includeIPRanges: ""
+  istioSystem: "default"
+  meshConfig: "istio"
+  sidecarProxyUID: "1337"
+  tag: "0.1"
+  verbosity: "2"
+  version: ""
