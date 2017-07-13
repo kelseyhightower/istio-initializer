@@ -1,0 +1,14 @@
+apiVersion: admissionregistration.k8s.io/v1alpha1
+kind: InitializerConfiguration
+metadata:
+  name: istio-initializer
+  namespace: default
+initializers:
+  - name: initializer.istio.io
+    rules:
+      - apiGroups:
+          - ""
+        apiVersions:
+          - v1
+        resources:
+          - pods
